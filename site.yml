@@ -22,7 +22,7 @@
             device: '{{ install_drive }}'
             label: gpt
             number: 1
-            part_end: 512MB
+            part_end: 512MiB
             name: boot
             flags: [boot, esp]
             state: present
@@ -31,56 +31,56 @@
             device: '{{ install_drive }}'
             label: gpt
             number: 2
-            part_start: 512MB
+            part_start: 512MiB
             name: root
             flags: [lvm]
             state: present
       tags:
         - repartition
-    - name: Setup LVM root and tmp volumes
+    - name: Setup LUKS encryption for root filesystem
+      block:
+        #        - name: Copy keyfile
+        #          copy:
+        #            src: '{{ luks_keyfile }}'
+        #            dest: /root/keyfile
+        - name: Destroy existing LUKS volume
+          community.crypto.luks_device:
+            device: '{{ install_drive }}{{ root_partition_suffix }}'
+            state: absent
+        - name: Create and open LUKS volume
+          community.crypto.luks_device:
+            device: '{{ install_drive }}{{ root_partition_suffix }}'
+            #keyfile: /root/keyfile
+            passphrase: '{{ luks_passphrase }}'
+            name: cryptroot
+            state: opened
+            #        - name: Get UUID for root LUKS volume
+            #          command: blkid -s UUID -o value /dev/cryptroot/root
+            #          register: root_luks_uuid
+            #          changed_when: false
+      tags:
+        - luks
+    - name: Setup LVM root
       block:
         - name: Remove existing volume group
           lvg:
-            vg: VolumeGroup00
+            vg: vg
             force: yes
             state: absent
         - name: Configure volume group
           lvg:
-            vg: VolumeGroup00
+            vg: vg
             pvs:
-              - '{{ install_drive }}{{ root_partition_suffix }}'
+              - '/dev/mapper/cryptroot'
         - name: Configure logical volumes
           lvol:
-            vg: VolumeGroup00
+            vg: vg
             lv: '{{ item.lv }}'
             size: '{{ item.size }}'
           loop:
-            - {lv: tmp, size: 512m}
             - {lv: root, size: "100%FREE"}
       tags:
         - lvm
-    - name: Setup LUKS encryption for root filesystem
-      block:
-        - name: Copy keyfile
-          copy:
-            src: '{{ luks_keyfile }}'
-            dest: /root/keyfile
-        - name: Destroy existing LUKS volume
-          luks_device:
-            device: /dev/VolumeGroup00/root
-            state: absent
-        - name: Create and open LUKS volume
-          luks_device:
-            device: /dev/VolumeGroup00/root
-            keyfile: /root/keyfile
-            name: root
-            state: opened
-        - name: Get UUID for root LUKS volume
-          command: blkid -s UUID -o value /dev/VolumeGroup00/root
-          register: root_luks_uuid
-          changed_when: false
-      tags:
-        - luks
     - name: Create filesystems
       block:
         - name: Create FAT32 filesystem in boot partition
@@ -91,7 +91,7 @@
             force: yes
         - name: Create ext4 filesystem in root volume
           filesystem:
-            dev: /dev/mapper/root
+            dev: /dev/mapper/vg-root
             fstype: ext4
             force: yes
         - name: Get UUID for boot filesystem
@@ -99,7 +99,7 @@
           register: boot_uuid
           changed_when: false
         - name: Get UUID for root filesystem
-          command: blkid -s UUID -o value /dev/mapper/root
+          command: blkid -s UUID -o value /dev/mapper/vg-root
           register: root_uuid
           changed_when: false
       tags:
@@ -132,11 +132,11 @@
               - pacman-contrib
             update_cache: yes
         - name: Use rankmirrors to filter the fastest mirrors that support HTTPS
-          shell: curl -s "https://www.archlinux.org/mirrorlist/?country=US&protocol=https&use_mirror_status=on" | sed -e 's/^#Server/Server/' -e '/^#/d' | rankmirrors -n 5 - > /etc/pacman.d/mirrorlist
+          shell: curl -s "https://www.archlinux.org/mirrorlist/?country=FI&protocol=https&use_mirror_status=on" | sed -e 's/^#Server/Server/' -e '/^#/d' | rankmirrors -n 5 - > /etc/pacman.d/mirrorlist
       tags:
         - mirrors
     - name: Run pacstrap
-      command: pacstrap /mnt base dhclient dhcpcd efibootmgr grub linux linux-firmware lvm2 netctl openssh python sudo
+      command: pacstrap /mnt base base-devel linux linux-firmware intel-ucode man-db man-pages texinfo neovim dhcpcd diffutils less lvm2 cryptsetup netctl which usbutils efibootmgr openssh python sudo wpa_supplicant
       tags:
         - pacstrap
     - name: Generate fstab
@@ -161,28 +161,10 @@
             opts: defaults
             passno: '2'
             state: present
-        - name: Add tmp volume to fstab
-          mount:
-            fstab: /mnt/etc/fstab
-            path: /tmp
-            src: /dev/mapper/tmp
-            fstype: tmpfs
-            opts: defaults
-            state: present
       tags:
         - fstab
-    - name: Add tmp volume to crypttab
-      crypttab:
-        path: /mnt/etc/crypttab
-        backing_device: /dev/VolumeGroup00/tmp
-        name: tmp
-        password: /dev/urandom
-        opts: tmp,cipher=aes-xts-plain64,size=512
-        state: present
-      tags:
-        - crypttab
     - name: Set local timezone
-      command: arch-chroot /mnt ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime
+      command: arch-chroot /mnt ln -sf /usr/share/zoneinfo/Europe/Helsinki /etc/localtime
       tags:
         - timezone
     - name: Generate adjtime file
@@ -197,11 +179,11 @@
             regexp: '{{ item.regex }}'
             line: '{{ item.line }}'
           loop:
-            - {regex: en_US\.UTF-8 UTF-8, line: en_US.UTF-8 UTF-8}
-            - {regex: en_US ISO-8859-1, line: en_US ISO-8859-1}
+            - {regex: en_GB\.UTF-8 UTF-8, line: en_GB.UTF-8 UTF-8}
+            - {regex: en_GB ISO-8859-1, line: en_GB ISO-8859-1}
         - name: Create locale.conf
           copy:
-            content: "LANG=en_US.UTF-8"
+            content: "LANG=en_GB.UTF-8"
             dest: /mnt/etc/locale.conf
         - name: Generate locales
           command: arch-chroot /mnt locale-gen
@@ -215,19 +197,19 @@
         - hostname
     - name: Setup netctl
       block:
-        - name: Create netctl profile for wired connection
+        - name: Create netctl profile for wireless connection
           copy:
             content: |
-              Description='Wired with DHCP'
-              Interface={{ wired_interface }}
-              Connection=ethernet
+              Description='Wireless with DHCP'
+              Interface={{ post_wireless_interface }}
+              Connection=wireless
+              ESSID={{ wireless_essid }}
+              Security={{ wireless_security }}
               IP=dhcp
-              IP6=dhcp-noaddr
-              # IPv6 traffic is tunneled over IPv4, which eats 20 bytes of the MTU.
-              ExecUpPost='/usr/bin/ip link set {{ wired_interface }} mtu 1480'
-            dest: /mnt/etc/netctl/wired
-        - name: Enable wired netctl profile
-          command: arch-chroot /mnt netctl enable wired
+              Key={{ wireless_passphrase }}
+            dest: "/mnt/etc/netctl/{{ post_wireless_interface }}-{{ wireless_essid_simple }}"
+        - name: Enable wireless netctl profile
+          command: "arch-chroot /mnt netctl enable {{ post_wireless_interface }}-{{ wireless_essid_simple }}"
       tags:
         - netctl
     - name: Enable sshd
@@ -240,25 +222,36 @@
           lineinfile:
             dest: /mnt/etc/mkinitcpio.conf
             regexp: ^HOOKS=
-            line: HOOKS=(base udev autodetect keyboard keymap modconf block encrypt lvm2 filesystems fsck)
+            line: HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck shutdown)
         - name: Create new initramfs
           command: arch-chroot /mnt mkinitcpio -p linux
       tags:
         - initramfs
         - mkinitcpio
-    - name: Set up grub
+    - name: Set up bootctl
       block:
-        - name: Add commandline information to grub config
-          lineinfile:
-            dest: /mnt/etc/default/grub
-            regexp: ^GRUB_CMDLINE_LINUX=
-            line: GRUB_CMDLINE_LINUX="cryptdevice=UUID={{ root_luks_uuid.stdout }}:root root=/dev/mapper/root"
-        - name: Install grub
-          command: arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
-        - name: Create grub config
-          command: arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+        - name: Create dirs for bootctl
+          file:
+            path: /mnt/boot/loader/entries
+            state: directory
+        - name: Add loader config
+          copy:
+            content: |
+              default arch
+            dest: /mnt/boot/loader/loader.conf
+        - name: Add loader entry config
+          copy:
+            content: |
+              title linux
+              linux /vmlinuz-linux
+              initrd /intel-ucode.img
+              initrd /initramfs-linux.img
+              options root=/dev/mapper/vg-root cryptdevice={{ install_drive }}{{ root_partition_suffix }}:cryptroot:allow-discards rw
+            dest: /mnt/boot/loader/entries/arch.conf
+        - name: Install bootctl
+          command: arch-chroot /mnt bootctl --path=/boot install
       tags:
-        - grub
+        - bootctl
     - name: Setup user account
       block:
         - name: Create user account
