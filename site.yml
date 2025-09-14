@@ -222,7 +222,7 @@
           lineinfile:
             dest: /mnt/etc/mkinitcpio.conf
             regexp: ^HOOKS=
-            line: HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck shutdown)
+            line: HOOKS=(base udev autodetect microcode modconf kms keyboard keymap block encrypt lvm2 resume filesystems fsck)
         - name: Create new initramfs
           command: arch-chroot /mnt mkinitcpio -p linux
       tags:
