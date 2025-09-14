@@ -283,9 +283,6 @@
         validate: /usr/sbin/visudo --check --file=%s
       tags:
         - sudo
-
-- hosts: all
-  tasks:
     - name: Reboot
       reboot:
         connect_timeout: 1
